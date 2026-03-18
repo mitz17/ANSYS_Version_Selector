@@ -46,3 +46,6 @@ workbench_versions.json
 # Temporary files
 *.tmp
 *.log
+
+# Local development notes
+DEVELOPMENT_LOG.md

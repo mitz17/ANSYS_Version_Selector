@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.exe
+*.spec
+*.pkg
+*.toc
+*.pyz
+*.html
+
+# PyInstaller analysis output
+warn-*.txt
+xref-*.html
+generated-*
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Launcher local settings
+fluent_versions.json
+spaceclaim_versions.json
+workbench_versions.json
+
+# Temporary files
+*.tmp
+*.log

@@ -15,7 +15,7 @@ try {
     $cleanArg = if ($Clean) { "--clean" } else { "" }
 
     $targets = @(
-        @{ Name='FluentVersionSelector'; Target='./Fluent_Launcher_from_md.py'; Icon='./Fluent.ico' },
+        @{ Name='FluentVersionSelector'; Target='./Fluent_Launcher.py'; Icon='./Fluent.ico' },
         @{ Name='SpaceClaimVersionSelector'; Target='./SpaceClaim_Launcher.py'; Icon='./spaceclaim.ico' },
         @{ Name='WorkbenchVersionSelector'; Target='./Workbench_Launcher.py'; Icon='./workbench.ico' }
     )

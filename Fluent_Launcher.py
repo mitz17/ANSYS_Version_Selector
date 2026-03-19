@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Fluent バージョン選択ツール（README_Fluent_Launcher.md に沿った実装）
+Fluent バージョン選択ツール
 
 - 対象拡張子: .msh, .msh.h5, .cas, .cas.h5, .dat, .dat.h5
 - 製品モード: ソルバ / メッシング

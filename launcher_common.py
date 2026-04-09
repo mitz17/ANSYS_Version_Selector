@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+import ctypes
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -60,6 +61,25 @@ def migrate_legacy_config(config_name: str) -> Path:
         except Exception:
             pass
     return config_path
+
+
+def prepare_external_launch_env(env_override: dict | None = None) -> dict:
+    env = os.environ.copy()
+    if env_override:
+        env.update(env_override)
+
+    # PyInstaller onefile 実行時は DLL 検索先や一時展開ディレクトリ情報が
+    # 外部プロセスへ引き継がれて、終了時の _MEI 削除失敗につながることがある。
+    if os.name == "nt":
+        try:
+            ctypes.windll.kernel32.SetDllDirectoryW(None)
+        except Exception:
+            pass
+
+    for key in ("_MEIPASS2", "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE"):
+        env.pop(key, None)
+
+    return env
 
 
 class BaseSettingsDialog(tk.Toplevel):

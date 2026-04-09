@@ -25,6 +25,7 @@ from launcher_common import (
     load_config,
     save_config,
     migrate_legacy_config,
+    prepare_external_launch_env,
 )
 
 APP_TITLE = "Fluent バージョン選択ツール"
@@ -32,6 +33,7 @@ CONFIG_NAME = "fluent_versions.json"
 DEFAULT_SCAN_ROOTS = [
     r"C:\\Program Files\\ANSYS Inc",
     r"C:\\Program Files\\Ansys Inc",
+    r"C:\\ANSYS-Inc",
 ]
 SUPPORTED_EXTS = [".msh", ".msh.h5", ".cas", ".cas.h5", ".dat", ".dat.h5"]
 PREFERRED_LOCALE_ENV = {
@@ -167,9 +169,7 @@ def launch_fluent(
     cmd.extend(["-i", journal_path])
 
     # 環境変数（日本語ロケール等）を上書きして起動
-    env = os.environ.copy()
-    if env_override:
-        env.update(env_override)
+    env = prepare_external_launch_env(env_override)
 
     try:
         subprocess.Popen(

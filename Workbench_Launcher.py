@@ -14,6 +14,7 @@ from launcher_common import (
     load_config,
     save_config,
     migrate_legacy_config,
+    prepare_external_launch_env,
 )
 
 APP_TITLE = "Workbench バージョン選択ツール"
@@ -21,6 +22,7 @@ CONFIG_NAME = "workbench_versions.json"
 DEFAULT_SCAN_ROOTS = [
     r"C:\\Program Files\\ANSYS Inc",
     r"C:\\Program Files\\Ansys Inc",
+    r"C:\\ANSYS-Inc",
 ]
 SUPPORTED_EXTS = [".wbpj"]
 
@@ -69,6 +71,7 @@ def launch_workbench(exe: str, filepath: str | None, workdir: Path):
         subprocess.Popen(
             cmd,
             cwd=str(workdir),
+            env=prepare_external_launch_env(),
             close_fds=True,
         )
     except Exception as e:

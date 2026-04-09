@@ -2,10 +2,10 @@
 param([switch]$Clean)
 
 function Ensure-PyInstaller {
-    if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-        python -m pip install --upgrade pip
+    if (-not (py -3 -m PyInstaller --version 2>$null)) {
+        py -3 -m pip install --upgrade pip
         if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-        python -m pip install pyinstaller
+        py -3 -m pip install pyinstaller
         if ($LASTEXITCODE -ne 0) { throw "pyinstaller install failed" }
     }
 }
@@ -24,12 +24,12 @@ try {
         Write-Host "Building $($t.Name) ..."
         $args = @("--noconfirm")
         if ($cleanArg) { $args += $cleanArg }
-        $args += @("--windowed", "--onefile", "--name", $t.Name)
+        $args += @("--windowed", "--onefile", "--noupx", "--name", $t.Name)
         if ($t.Icon -and (Test-Path $t.Icon)) {
             $args += @("--icon", $t.Icon)
         }
         $args += $t.Target
-        & pyinstaller @args
+        & py -3 -m PyInstaller @args
         if ($LASTEXITCODE -ne 0) { throw "build failed for $($t.Name)" }
     }
     Write-Host "All builds finished. See dist\\*.exe"

@@ -3,18 +3,17 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+
+import webview
+
 from launcher_common import (
-    BaseSettingsDialog,
-    load_config,
-    save_config,
-    migrate_legacy_config,
+    WebAPI,
+    resource_path,
     prepare_external_launch_env,
+    fatal_error_dialog,
 )
 
 APP_TITLE = "Workbench バージョン選択ツール"
@@ -63,10 +62,10 @@ def find_workbench_exes() -> dict[str, str]:
     return found
 
 
-def launch_workbench(exe: str, filepath: str | None, workdir: Path):
+def launch_workbench(exe: str, filepath: str | None, workdir: Path) -> dict:
     cmd = [exe]
     if filepath:
-        cmd.extend(["-F", filepath])  # ← 修正
+        cmd.extend(["-F", filepath])
     try:
         subprocess.Popen(
             cmd,
@@ -75,149 +74,79 @@ def launch_workbench(exe: str, filepath: str | None, workdir: Path):
             close_fds=True,
         )
     except Exception as e:
-        messagebox.showerror("起動エラー", f"Workbench の起動に失敗しました:\n{e}")
+        return {"ok": False, "error": f"Workbench の起動に失敗しました:\n{e}"}
+    return {"ok": True}
 
 
-class App(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
-        try:
-            style = ttk.Style(self)
-            for candidate in ("vista", "xpnative", "clam"):
-                if candidate in style.theme_names():
-                    style.theme_use(candidate)
-                    break
-            base_font = ("Segoe UI", 10)
-            style.configure("TLabel", font=base_font)
-            style.configure("TButton", font=base_font, padding=(10, 6))
-            style.configure("TLabelframe", padding=10)
-            style.configure("TLabelframe.Label", font=("Segoe UI", 10, "bold"))
-            # 既定色のまま（可読性重視）
-        except Exception:
-            pass
-
-        self.title(APP_TITLE)
-        self.geometry("820x360")
-        self.minsize(680, 320)
-        self.resizable(True, True)
-
-        self.config_path = migrate_legacy_config(CONFIG_NAME)
-        self.data = load_config(self.config_path)
-        if not self.data.get("versions"):
-            preset = {}
-            sample = r"C:\\Program Files\\ANSYS Inc\\v252\\Framework\\bin\\Win64\\RunWB2.exe"
-            if Path(sample).exists():
-                preset["v252"] = sample
-            preset.update(find_workbench_exes())
-            if preset:
-                self.data["versions"] = preset
-                save_config(self.config_path, self.data)
-
-        pad = 12
-        frm = ttk.Frame(self, padding=pad)
-        frm.pack(fill="both", expand=True)
-        frm.grid_columnconfigure(0, weight=1)
-        frm.grid_columnconfigure(1, weight=1)
-
-        # ファイル
-        filegrp = ttk.Labelframe(frm, text="入力ファイル（任意: .wbpj）")
-        filegrp.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, pad))
-        filegrp.grid_columnconfigure(0, weight=1)
-        self.file_var = tk.StringVar()
-        ttk.Entry(filegrp, textvariable=self.file_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(filegrp, text="参照...", command=self.browse_file).grid(row=0, column=1, padx=(8, 0))
-
-        # バージョン（ワンクリック）
-        vergrp = ttk.Labelframe(frm, text="Workbench バージョン")
-        vergrp.grid(row=1, column=0, sticky="nsew", pady=(0, pad))
-        vergrp.grid_rowconfigure(0, weight=1)
-        vergrp.grid_columnconfigure(0, weight=1)
-        self.ver_var = tk.StringVar()
-        self.lst_ver = tk.Listbox(vergrp, height=6)
-        self.lst_ver.grid(row=0, column=0, sticky="nsew")
-        vsb_ver = ttk.Scrollbar(vergrp, orient="vertical", command=self.lst_ver.yview)
-        vsb_ver.grid(row=0, column=1, sticky="ns")
-        self.lst_ver.configure(yscrollcommand=vsb_ver.set)
-        self.lst_ver.bind("<<ListboxSelect>>", self.on_version_select)
-        ttk.Button(vergrp, text="設定...", command=self.open_settings).grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.refresh_versions()
-
-        # 実行
-        ttk.Button(frm, text="Workbench を起動", command=self.run).grid(
-            row=2, column=0, pady=(pad, 0), sticky="w"
-        )
-
-        if len(sys.argv) > 1:
-            arg = sys.argv[1]
-            if Path(arg).exists():
-                self.file_var.set(arg)
-
-    def browse_file(self):
-        f = filedialog.askopenfilename(
-            title="Workbench プロジェクトを選択",
-            filetypes=[("Workbench Project", "*.wbpj"), ("All files", "*.*")],
-        )
-        if f:
-            self.file_var.set(f)
-
-    def refresh_versions(self):
-        versions = list((self.data.get("versions") or {}).keys())
-        self.lst_ver.delete(0, tk.END)
-        for v in versions:
-            self.lst_ver.insert(tk.END, v)
-        if versions:
-            self.lst_ver.selection_clear(0, tk.END)
-            self.lst_ver.selection_set(0)
-            self.lst_ver.activate(0)
-            self.ver_var.set(versions[0])
-
-    def open_settings(self):
-        dialog = SettingsDialog(self, self.data)
-        if dialog.result:
-            self.data = dialog.data
-            save_config(self.config_path, self.data)
-            self.refresh_versions()
-
-    def on_version_select(self, _):
-        sel = self.lst_ver.curselection()
-        if sel:
-            self.ver_var.set(self.lst_ver.get(sel[0]))
-
-    def run(self):
-        fpath = self.file_var.get().strip().strip('"')
+class WorkbenchAPI(WebAPI):
+    def launch(self, payload: dict) -> dict:
+        fpath = (payload.get("file") or "").strip().strip('"')
         p = Path(fpath) if fpath else None
         if p and not p.exists():
-            messagebox.showerror("エラー", f"ファイルが見つかりません:\n{p}")
-            return
-        ver = self.ver_var.get().strip()
+            return {"ok": False, "error": f"ファイルが見つかりません:\n{p}"}
+
+        ver = (payload.get("version") or "").strip()
         exe = (self.data.get("versions") or {}).get(ver)
         if not exe or not Path(exe).exists():
-            messagebox.showerror("エラー", "選択したバージョンの実行ファイルが無効です。設定から修正してください。")
-            return
+            return {"ok": False, "error": "選択したバージョンの実行ファイルが無効です。設定から修正してください。"}
+
         workdir = p.parent.resolve() if p else Path.home()
-        launch_workbench(exe, str(p) if p else None, workdir)
-        self.destroy()
+        return launch_workbench(exe, str(p) if p else None, workdir)
 
 
-class SettingsDialog(BaseSettingsDialog):
-    def __init__(self, parent, data: dict):
-        super().__init__(
-            parent,
-            data,
-            window_title="バージョン設定",
-            executable_label="実行ファイルのパス:",
-            browse_title="実行ファイルを選択",
-            browse_filetypes=[("Executable", "*.exe"), ("All files", "*.*")],
-            scan_confirm_message="システムをスキャンして Workbench のバージョンを検索しますか？\n既存のパスが上書きされる可能性があります。",
-            scan_empty_message="Workbench のインストールが見つかりませんでした。",
-            scan_done_message="{count} 個のバージョンを検出・更新しました。",
-            find_versions_callback=find_workbench_exes,
-        )
+def build_initial_versions(api: WorkbenchAPI):
+    if api.data.get("versions"):
+        return
+    preset = {}
+    sample = r"C:\\Program Files\\ANSYS Inc\\v252\\Framework\\bin\\Win64\\RunWB2.exe"
+    if Path(sample).exists():
+        preset["v252"] = sample
+    preset.update(find_workbench_exes())
+    if preset:
+        api.data["versions"] = preset
+        api._persist()
+
+
+def main():
+    initial_file = None
+    if len(sys.argv) > 1 and Path(sys.argv[1]).exists():
+        initial_file = sys.argv[1]
+
+    api = WorkbenchAPI(
+        config_name=CONFIG_NAME,
+        app_title=APP_TITLE,
+        app_kind="workbench",
+        find_versions_callback=find_workbench_exes,
+        browse_filetypes=("Executable (*.exe)", "All files (*.*)"),
+        initial_file=initial_file,
+        scan_confirm_message=(
+            "システムをスキャンして Workbench のバージョンを検索しますか？\n既存のパスが上書きされる可能性があります。"
+        ),
+        extra={
+            "fileGroupLabel": "入力ファイル（任意: .wbpj）",
+            "versionLabel": "Workbench バージョン",
+            "browseFileTypes": ["Workbench Project (*.wbpj)", "All files (*.*)"],
+            "primaryButtonLabel": "Workbenchを起動",
+            "scanEmptyMessage": "Workbench のインストールが見つかりませんでした。",
+            "scanDoneMessageTemplate": "{count} 個のバージョンを検出・更新しました。",
+        },
+    )
+    build_initial_versions(api)
+
+    window = webview.create_window(
+        APP_TITLE,
+        url=str(resource_path("webui", "app.html")),
+        js_api=api,
+        width=760,
+        height=460,
+        min_size=(640, 380),
+    )
+    api._window = window
+    webview.start()
 
 
 if __name__ == "__main__":
     try:
-        app = App()
-        app.mainloop()
+        main()
     except Exception as e:
-        messagebox.showerror(APP_TITLE, f"致命的なエラー:\n{e}")
+        fatal_error_dialog(APP_TITLE, f"致命的なエラー:\n{e}")

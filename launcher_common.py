@@ -5,15 +5,23 @@ import os
 import shutil
 import sys
 import ctypes
+import threading
+import time
 from pathlib import Path
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+
+import webview
 
 
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def resource_path(*parts: str) -> Path:
+    """PyInstaller onefile展開先も考慮したリソース(webui資産等)の解決。"""
+    base = Path(getattr(sys, "_MEIPASS", None) or app_base_dir())
+    return base.joinpath(*parts)
 
 
 def config_base_dir() -> Path:
@@ -82,182 +90,132 @@ def prepare_external_launch_env(env_override: dict | None = None) -> dict:
     return env
 
 
-class BaseSettingsDialog(tk.Toplevel):
+def fatal_error_dialog(title: str, message: str):
+    """webview/tkinterのどちらも使えない致命的エラー時の最終手段。"""
+    if os.name == "nt":
+        try:
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
+            return
+        except Exception:
+            pass
+    print(f"{title}: {message}", file=sys.stderr)
+
+
+class WebAPI:
+    """3つのランチャー共通のJS-API(pywebview)基底クラス。
+
+    設定ファイルの読み書き・バージョン一覧の追加/削除/並べ替え/スキャン・
+    ネイティブファイルダイアログなど、UI非依存のロジックをまとめる。
+    """
+
     def __init__(
         self,
-        parent,
-        data: dict,
-        window_title: str,
-        executable_label: str,
-        browse_title: str,
-        browse_filetypes,
-        scan_confirm_message: str,
-        scan_empty_message: str,
-        scan_done_message: str,
+        config_name: str,
+        app_title: str,
+        app_kind: str,
         find_versions_callback,
-        initialdir: str = r"C:\\Program Files\\ANSYS Inc",
+        browse_filetypes: tuple[str, ...],
+        initial_file: str | None = None,
+        scan_confirm_message: str = "",
+        extra: dict | None = None,
     ):
-        super().__init__(parent)
-        self.transient(parent)
-        self.grab_set()
-        self.title(window_title)
-        self.parent = parent
-        self.data = {"versions": dict((data or {}).get("versions", {}))}
-        self.result = False
-        self.browse_title = browse_title
-        self.browse_filetypes = browse_filetypes
-        self.scan_confirm_message = scan_confirm_message
-        self.scan_empty_message = scan_empty_message
-        self.scan_done_message = scan_done_message
+        self.config_path = migrate_legacy_config(config_name)
+        self.data = load_config(self.config_path)
+        self.app_title = app_title
+        self.app_kind = app_kind
         self.find_versions_callback = find_versions_callback
-        self.initialdir = initialdir
+        self.browse_filetypes = browse_filetypes
+        self.initial_file = initial_file
+        self.scan_confirm_message = scan_confirm_message
+        self.extra = extra or {}
+        # 注意: 属性名は必ずアンダースコア始まりにすること。
+        # pywebview は js_api オブジェクトを dir() で再帰的に走査して JS へ自動公開するが、
+        # `_` 始まりの属性は走査対象から除外される。ここに Window の参照をアンダースコア無しの
+        # 属性として持たせると、pywebview が window.native (.NET のネイティブウィンドウ) まで
+        # 再帰的に辿ろうとして COM のクロススレッドアクセス例外や無限再帰
+        # (AccessibilityObject.Bounds.Empty.Empty... 等) を引き起こす。
+        self._window = None  # create_window() 後に呼び出し側が設定する
 
-        pad = 10
-        frm = ttk.Frame(self, padding=pad)
-        frm.pack(fill="both", expand=True)
-        self.geometry("640x480")
+    # ---- bootstrap ----
+    def get_bootstrap(self):
+        return {
+            "title": self.app_title,
+            "appKind": self.app_kind,
+            "versions": self.data.get("versions", {}),
+            "initialFile": self.initial_file,
+            "scanConfirmMessage": self.scan_confirm_message,
+            "extra": self.extra,
+        }
 
-        cols = ("Version", "Path")
-        self.tree = ttk.Treeview(frm, columns=cols, show="headings", height=8)
-        self.tree.grid(row=0, column=0, columnspan=3, sticky="nsew")
-        frm.grid_rowconfigure(0, weight=1)
-        frm.grid_columnconfigure(1, weight=1)
+    def _persist(self):
+        save_config(self.config_path, self.data)
 
-        vsb = ttk.Scrollbar(frm, orient="vertical", command=self.tree.yview)
-        vsb.grid(row=0, column=3, sticky="ns")
-        self.tree.configure(yscrollcommand=vsb.set)
-        for col in cols:
-            self.tree.heading(col, text=col)
-        self.tree.column("Version", width=100, anchor="w")
-        self.tree.column("Path", width=400, anchor="w")
-        self.tree.bind("<<TreeviewSelect>>", self.on_select)
+    # ---- バージョン管理 ----
+    def add_or_update_version(self, name: str, path: str):
+        name = (name or "").strip()
+        path = (path or "").strip()
+        if not name or not path:
+            return {"ok": False, "error": "バージョン名とパスを入力してください。"}
+        self.data.setdefault("versions", {})[name] = path
+        self._persist()
+        return {"ok": True, "versions": self.data["versions"]}
 
-        self.ver_var = tk.StringVar()
-        self.path_var = tk.StringVar()
-        ttk.Label(frm, text="バージョン名").grid(row=1, column=0, sticky="w", pady=(pad, 0))
-        ttk.Entry(frm, textvariable=self.ver_var, width=20).grid(row=2, column=0, sticky="w")
-        ttk.Label(frm, text=executable_label).grid(row=1, column=1, sticky="w", pady=(pad, 0), padx=(pad, 0))
-        ttk.Entry(frm, textvariable=self.path_var, width=60).grid(row=2, column=1, sticky="we", padx=(pad, 0))
-        ttk.Button(frm, text="...", command=self.browse_exe, width=3).grid(row=2, column=2, sticky="w", padx=(5, 0))
+    def delete_version(self, name: str):
+        versions = self.data.get("versions", {})
+        if name in versions:
+            del versions[name]
+            self._persist()
+        return {"ok": True, "versions": self.data.get("versions", {})}
 
-        btn_frm = ttk.Frame(frm, padding=(0, pad, 0, 0))
-        btn_frm.grid(row=3, column=0, columnspan=3, sticky="ew")
-        ttk.Button(btn_frm, text="追加/更新", command=self.add_update).pack(side="left")
-        ttk.Button(btn_frm, text="削除", command=self.delete_item).pack(side="left", padx=(5, 0))
-        ttk.Button(btn_frm, text="上へ", command=lambda: self.move_item(-1)).pack(side="left", padx=(5, 0))
-        ttk.Button(btn_frm, text="下へ", command=lambda: self.move_item(1)).pack(side="left", padx=(5, 0))
-        ttk.Button(btn_frm, text="スキャン", command=self.scan_versions).pack(side="left", padx=(20, 0))
-        right_btn_frm = ttk.Frame(btn_frm)
-        right_btn_frm.pack(side="right")
-        ttk.Button(right_btn_frm, text="保存して閉じる", command=self.save_and_close).pack(side="left")
-        ttk.Button(right_btn_frm, text="キャンセル", command=self.cancel).pack(side="left", padx=(5, 0))
-
-        self.load_versions()
-        self.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.wait_window(self)
-
-    def load_versions(self):
-        for item_id in self.tree.get_children():
-            self.tree.delete(item_id)
-        for ver, path in self.data.get("versions", {}).items():
-            self.tree.insert("", "end", values=(ver, path))
-
-    def on_select(self, _event):
-        selected = self.tree.selection()
-        if not selected:
-            return
-        item = self.tree.item(selected[0])
-        ver, path = item["values"]
-        self.ver_var.set(ver)
-        self.path_var.set(path)
-
-    def browse_exe(self):
-        f = filedialog.askopenfilename(
-            title=self.browse_title,
-            filetypes=self.browse_filetypes,
-            initialdir=self.initialdir,
-        )
-        if f:
-            self.path_var.set(f)
-
-    def add_update(self):
-        ver = self.ver_var.get().strip()
-        path = self.path_var.get().strip()
-        if not ver or not path:
-            messagebox.showwarning("入力エラー", "バージョン名とパスを入力してください。", parent=self)
-            return
-        if "versions" not in self.data:
-            self.data["versions"] = {}
-        self.data["versions"][ver] = path
-        self.load_versions()
-        self.clear_entries()
-
-    def delete_item(self):
-        ver = self.ver_var.get().strip()
-        if not ver:
-            selected = self.tree.selection()
-            if selected:
-                item = self.tree.item(selected[0])
-                ver = item["values"][0]
-            else:
-                messagebox.showwarning("選択エラー", "削除するバージョンを選択または入力してください。", parent=self)
-                return
-        if "versions" in self.data and ver in self.data["versions"]:
-            if messagebox.askyesno("確認", f"バージョン '{ver}' を削除しますか？", parent=self):
-                del self.data["versions"][ver]
-                self.load_versions()
-                self.clear_entries()
-
-    def move_item(self, direction: int):
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("選択エラー", "並べ替えるバージョンを選択してください。", parent=self)
-            return
-
-        ver = self.tree.item(selected[0])["values"][0]
+    def move_version(self, name: str, direction: int):
         versions = list((self.data.get("versions") or {}).items())
-        index = next((i for i, (name, _) in enumerate(versions) if name == ver), None)
-        if index is None:
-            return
-
-        new_index = index + direction
-        if new_index < 0 or new_index >= len(versions):
-            return
-
-        versions[index], versions[new_index] = versions[new_index], versions[index]
+        idx = next((i for i, (n, _) in enumerate(versions) if n == name), None)
+        if idx is None:
+            return {"ok": False, "versions": dict(versions)}
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(versions):
+            return {"ok": False, "versions": dict(versions)}
+        versions[idx], versions[new_idx] = versions[new_idx], versions[idx]
         self.data["versions"] = dict(versions)
-        self.load_versions()
-
-        children = self.tree.get_children()
-        target = children[new_index]
-        self.tree.selection_set(target)
-        self.tree.focus(target)
-        self.tree.see(target)
-        self.on_select(None)
+        self._persist()
+        return {"ok": True, "versions": self.data["versions"]}
 
     def scan_versions(self):
-        if not messagebox.askyesno("確認", self.scan_confirm_message, parent=self):
-            return
         found = self.find_versions_callback()
         if not found:
-            messagebox.showinfo("スキャン結果", self.scan_empty_message, parent=self)
-            return
-        if "versions" not in self.data:
-            self.data["versions"] = {}
-        self.data["versions"].update(found)
-        self.load_versions()
-        messagebox.showinfo("完了", self.scan_done_message.format(count=len(found)), parent=self)
+            return {"ok": True, "count": 0, "versions": self.data.get("versions", {})}
+        self.data.setdefault("versions", {}).update(found)
+        self._persist()
+        return {"ok": True, "count": len(found), "versions": self.data["versions"]}
 
-    def clear_entries(self):
-        self.ver_var.set("")
-        self.path_var.set("")
-        if self.tree.selection():
-            self.tree.selection_remove(self.tree.selection()[0])
+    # ---- ネイティブダイアログ ----
+    def browse_exe(self):
+        result = self._window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            directory=r"C:\\Program Files\\ANSYS Inc",
+            file_types=self.browse_filetypes,
+        )
+        return result[0] if result else None
 
-    def save_and_close(self):
-        self.result = True
-        self.destroy()
+    def browse_input_file(self, file_types: list[str]):
+        result = self._window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            file_types=tuple(file_types),
+        )
+        return result[0] if result else None
 
-    def cancel(self):
-        self.result = False
-        self.destroy()
+    def close(self):
+        # JS ブリッジ呼び出しの戻り値マーシャリング中に window.destroy() を同期実行すると、
+        # 破棄途中のネイティブウィンドウを pywebview 側が辿ろうとして
+        # RecursionError (AccessibilityObject.Bounds.Empty...) を起こすことがある。
+        # この呼び出しの完了後にウィンドウを破棄するよう、別スレッドへ逃がす。
+        if self._window:
+            window = self._window
+            def _destroy_later():
+                time.sleep(0.15)
+                try:
+                    window.destroy()
+                except Exception:
+                    pass
+            threading.Thread(target=_destroy_later, daemon=True).start()
+        return {"ok": True}

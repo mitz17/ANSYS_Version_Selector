@@ -18,6 +18,7 @@ dist/
 *.toc
 *.pyz
 *.html
+!webui/*.html
 
 # PyInstaller analysis output
 warn-*.txt

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="color-scheme" content="light dark" />
+<title>ANSYS Version Selector</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1 class="title" id="appTitle">&nbsp;</h1>
+      <button class="icon-btn" id="helpBtn" title="ヘルプ" aria-label="ヘルプ" hidden>?</button>
+      <button class="icon-btn" id="settingsBtn" title="バージョン設定" aria-label="バージョン設定">⚙</button>
+    </header>
+
+    <main class="content">
+      <section class="card">
+        <label class="field-label" id="fileGroupLabel">入力ファイル(任意)</label>
+        <div class="file-row">
+          <input type="text" id="fileInput" class="text-input" placeholder="ファイルを選択…" />
+          <button class="btn btn-secondary" id="browseFileBtn">参照…</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <label class="field-label" id="versionLabel">バージョン</label>
+        <div class="version-list" id="versionList" role="listbox" aria-label="バージョン一覧"></div>
+      </section>
+
+      <section class="card" id="fluentControls" hidden>
+        <div class="control-row">
+          <label class="field-label">製品モード</label>
+          <div class="segmented" id="productSeg" data-group="product" role="group" aria-label="製品モード">
+            <button type="button" class="seg-btn" data-value="solver">ソルバ</button>
+            <button type="button" class="seg-btn" data-value="meshing">メッシング</button>
+          </div>
+        </div>
+        <div class="control-row" id="dimRow">
+          <label class="field-label">次元・精度</label>
+          <div class="dim-controls">
+            <div class="segmented" id="dimSeg" data-group="dim" role="group" aria-label="次元">
+              <button type="button" class="seg-btn" data-value="2d">2D</button>
+              <button type="button" class="seg-btn" data-value="3d">3D</button>
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" id="dpCheck" checked />
+              <span>Double Precision</span>
+            </label>
+          </div>
+        </div>
+        <div class="control-row">
+          <label class="field-label">並列プロセス数</label>
+          <div class="segmented" id="procSeg" data-group="proc" role="group" aria-label="並列プロセス数">
+            <button type="button" class="seg-btn" data-value="1">1</button>
+            <button type="button" class="seg-btn" data-value="4">4</button>
+            <button type="button" class="seg-btn" data-value="12">12</button>
+            <button type="button" class="seg-btn" data-value="15">15</button>
+            <button type="button" class="seg-btn" data-value="20">20</button>
+            <button type="button" class="seg-btn" data-value="24">24</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="actions">
+      <button class="btn btn-primary" id="launchBtn">起動</button>
+      <button class="btn btn-secondary" id="launcherBtn" hidden>Launcherを起動</button>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- バージョン設定モーダル -->
+  <div class="modal-overlay" id="settingsOverlay" hidden>
+    <div class="modal-panel" id="settingsPanel" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2>バージョン設定</h2>
+        <button class="icon-btn" id="settingsCloseBtn" aria-label="閉じる">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="version-table" id="versionTable"></div>
+
+        <div class="add-form">
+          <input type="text" id="newVerName" class="text-input" placeholder="バージョン名 (例: v252)" />
+          <div class="add-form-row">
+            <input type="text" id="newVerPath" class="text-input" placeholder="実行ファイルのパス" />
+            <button class="btn btn-secondary" id="newVerBrowseBtn">…</button>
+          </div>
+          <div class="add-form-actions">
+            <button class="btn btn-primary btn-sm" id="addVerBtn">追加 / 更新</button>
+            <button class="btn btn-secondary btn-sm" id="scanBtn">スキャン</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="settingsCancelBtn">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 汎用確認モーダル -->
+  <div class="modal-overlay" id="confirmOverlay" hidden>
+    <div class="modal-panel modal-panel-sm" id="confirmPanel" role="alertdialog" aria-modal="true">
+      <p id="confirmMessage"></p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="confirmCancelBtn">キャンセル</button>
+        <button class="btn btn-danger" id="confirmOkBtn">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ヘルプモーダル -->
+  <div class="modal-overlay" id="helpOverlay" hidden>
+    <div class="modal-panel modal-panel-sm" id="helpPanel" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2>ヒント</h2>
+        <button class="icon-btn" id="helpCloseBtn" aria-label="閉じる">✕</button>
+      </div>
+      <p id="helpMessage" class="help-text"></p>
+    </div>
+  </div>
+
+<script src="app.js"></script>
+</body>
+</html>

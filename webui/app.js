@@ -78,9 +78,11 @@
       state.selectedVersion = entries[0][0];
     }
     for (const [name, path] of entries) {
-      const row = document.createElement("div");
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "version-row" + (name === state.selectedVersion ? " selected" : "");
       row.setAttribute("role", "option");
+      row.setAttribute("tabindex", "0");
       row.setAttribute("aria-selected", name === state.selectedVersion ? "true" : "false");
       row.dataset.name = name;
 
@@ -98,9 +100,16 @@
       vpath.title = path;
 
       row.append(check, vname, vpath);
-      row.addEventListener("click", () => {
+      const selectVersion = () => {
         state.selectedVersion = name;
         renderVersionList();
+      };
+      row.addEventListener("click", selectVersion);
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectVersion();
+        }
       });
       list.appendChild(row);
     }
@@ -112,7 +121,9 @@
     if (!container) return;
     const apply = (value) => {
       container.querySelectorAll(".seg-btn").forEach((btn) => {
-        btn.classList.toggle("selected", btn.dataset.value === value);
+        const selected = btn.dataset.value === value;
+        btn.classList.toggle("selected", selected);
+        btn.setAttribute("aria-pressed", selected ? "true" : "false");
       });
     };
     apply(initialValue);

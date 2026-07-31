@@ -25,13 +25,13 @@
 
       <section class="card">
         <label class="field-label" id="versionLabel">バージョン</label>
-        <div class="version-list" id="versionList" role="listbox"></div>
+        <div class="version-list" id="versionList" role="listbox" aria-label="バージョン一覧"></div>
       </section>
 
       <section class="card" id="fluentControls" hidden>
         <div class="control-row">
           <label class="field-label">製品モード</label>
-          <div class="segmented" id="productSeg" data-group="product">
+          <div class="segmented" id="productSeg" data-group="product" role="group" aria-label="製品モード">
             <button type="button" class="seg-btn" data-value="solver">ソルバ</button>
             <button type="button" class="seg-btn" data-value="meshing">メッシング</button>
           </div>
@@ -39,7 +39,7 @@
         <div class="control-row" id="dimRow">
           <label class="field-label">次元・精度</label>
           <div class="dim-controls">
-            <div class="segmented" id="dimSeg" data-group="dim">
+            <div class="segmented" id="dimSeg" data-group="dim" role="group" aria-label="次元">
               <button type="button" class="seg-btn" data-value="2d">2D</button>
               <button type="button" class="seg-btn" data-value="3d">3D</button>
             </div>
@@ -51,7 +51,7 @@
         </div>
         <div class="control-row">
           <label class="field-label">並列プロセス数</label>
-          <div class="segmented" id="procSeg" data-group="proc">
+          <div class="segmented" id="procSeg" data-group="proc" role="group" aria-label="並列プロセス数">
             <button type="button" class="seg-btn" data-value="1">1</button>
             <button type="button" class="seg-btn" data-value="4">4</button>
             <button type="button" class="seg-btn" data-value="12">12</button>

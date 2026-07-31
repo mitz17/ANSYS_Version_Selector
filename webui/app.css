@@ -1,6 +1,6 @@
 /* ============ デザイントークン ============ */
 :root {
-  --bg: #f5f5f7;
+  --bg: #f4f5f7;
   --card-bg: #ffffff;
   --topbar-bg: rgba(245, 245, 247, 0.72);
   --text: #1d1d1f;
@@ -13,9 +13,11 @@
   --danger-contrast: #ffffff;
   --scrim: rgba(0, 0, 0, 0.32);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --focus-ring: 0 0 0 3px var(--accent-soft);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -86,6 +88,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  scrollbar-gutter: stable;
 }
 
 .card {
@@ -94,6 +97,7 @@ html, body {
   border-radius: 14px;
   padding: 14px 16px;
   box-shadow: var(--shadow);
+  contain: layout paint;
 }
 
 .field-label {
@@ -136,7 +140,7 @@ html, body {
 .text-input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 
 .file-row {
@@ -156,6 +160,21 @@ html, body {
   transition: transform 160ms var(--ease-out), background-color 150ms ease, opacity 150ms ease;
 }
 .btn:active { transform: scale(0.97); }
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.seg-btn:focus-visible,
+.version-row:focus-visible,
+.text-input:focus-visible,
+.checkbox-label:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn:disabled,
+.icon-btn:disabled {
+  cursor: default;
+  opacity: 0.38;
+  pointer-events: none;
+}
 
 .btn-primary {
   background: var(--accent);
@@ -212,8 +231,10 @@ html, body {
   padding: 8px 10px;
   border-radius: 9px;
   cursor: pointer;
-  transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+  min-height: 36px;
+  transition: background-color 150ms var(--ease-out), transform 120ms var(--ease-out);
 }
+.version-row:active { transform: scale(0.99); }
 
 @media (hover: hover) and (pointer: fine) {
   .version-row:hover { background: rgba(127, 127, 127, 0.1); }
@@ -225,13 +246,7 @@ html, body {
   white-space: nowrap;
 }
 .version-row .v-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
+  display: none;
 }
 .version-row .v-check {
   opacity: 0;
@@ -328,6 +343,8 @@ html, body {
   position: fixed;
   inset: 0;
   background: var(--scrim);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -351,11 +368,13 @@ html, body {
   transform-origin: center;
   transform: scale(0.95);
   opacity: 0;
-  transition: transform 200ms var(--ease-out), opacity 200ms var(--ease-out);
+  transition: transform 220ms var(--ease-drawer), opacity 180ms var(--ease-out), filter 220ms var(--ease-out);
+  filter: blur(2px);
 }
 .modal-overlay.show .modal-panel {
   transform: scale(1);
   opacity: 1;
+  filter: blur(0);
 }
 .modal-panel-sm { max-width: 380px; }
 
@@ -454,11 +473,31 @@ html, body {
 /* ============ アクセシビリティ ============ */
 @media (prefers-reduced-motion: reduce) {
   * {
-    transition-duration: 60ms !important;
+    transition-duration: 120ms !important;
     animation: none !important;
   }
   .btn:active, .icon-btn:active, .seg-btn:active { transform: none !important; }
-  .modal-panel { transform: none !important; }
+  .modal-panel { transform: none !important; filter: none !important; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .topbar { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .modal-overlay { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+@media (prefers-contrast: more) {
+  :root { --border: currentColor; }
+  .card, .modal-panel, .text-input, .version-table { border-width: 1px; border-color: var(--border); }
+  .btn-secondary, .segmented { border: 1px solid var(--border); }
+}
+
+@media (max-width: 420px) {
+  .topbar { padding-inline: 16px; }
+  .content { padding-inline: 16px; }
+  .actions { padding-inline: 16px; }
+  .control-row { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .dim-controls { width: 100%; justify-content: space-between; }
+  .segmented { max-width: 100%; overflow-x: auto; }
 }
 
 /* スクロールバー(細身) */

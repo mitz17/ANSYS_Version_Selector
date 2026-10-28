@@ -46,9 +46,14 @@ class LauncherTestBase(unittest.TestCase):
         self.cfg_dir = self.tmp / "cfg"
         self.cfg_dir.mkdir()
         # 設定ファイルをテスト用の一時フォルダに向ける
+        self.work = self.tmp / "work"
+        self.work.mkdir()
         self._patches = [
             mock.patch.object(launcher_common, "app_base_dir", return_value=self.cfg_dir),
             mock.patch.object(launcher_common, "config_base_dir", return_value=self.cfg_dir),
+            # テストは os.environ をクリアするため、実行環境（特に Windows）の
+            # USERPROFILE 等に依存する Path.home() が失敗しないよう固定する
+            mock.patch.object(FL.Path, "home", return_value=self.work),
         ]
         for p in self._patches:
             p.start()
@@ -59,8 +64,6 @@ class LauncherTestBase(unittest.TestCase):
             exe.parent.mkdir(parents=True)
             exe.write_text("")
             self.exes[rel] = str(exe)
-        self.work = self.tmp / "work"
-        self.work.mkdir()
 
     def tearDown(self):
         for p in self._patches:

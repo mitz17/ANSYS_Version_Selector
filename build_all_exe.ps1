@@ -25,6 +25,8 @@ try {
         $args = @("--noconfirm")
         if ($cleanArg) { $args += $cleanArg }
         $args += @("--windowed", "--onefile", "--noupx", "--name", $t.Name)
+        # Bundle the pywebview UI files (webui/) into the EXE (resolved via resource_path("webui", ...))
+        $args += @("--add-data", "webui;webui")
         if ($t.Icon -and (Test-Path $t.Icon)) {
             $args += @("--icon", $t.Icon)
         }

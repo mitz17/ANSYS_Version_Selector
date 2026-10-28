@@ -265,12 +265,74 @@ class TestGpuLaunch(LauncherTestBase):
         self.assertIn("fluent.exe", res["error"])
 
 
+class TestLicenseLaunch(LauncherTestBase):
+    def test_direct_license_adds_cli_arg(self):
+        for value in ("premium", "enterprise", "hpc_ultimate"):
+            with self.subTest(value=value):
+                res, cmd, env, _ = self.launch(license=value)
+                self.assertTrue(res["ok"], res)
+                self.assertIn(f"-license={value}", cmd)
+                self.assertNotIn("FLUENT_LAUNCHER_OPTIONS", env)
+
+    def test_unspecified_license_adds_nothing(self):
+        res, cmd, env, _ = self.launch(license="")
+        self.assertTrue(res["ok"], res)
+        self.assertFalse([a for a in cmd if a.startswith("-license=")])
+        self.assertNotIn("FLUENT_LAUNCHER_OPTIONS", env)
+
+    def test_cfd_pro_direct_launch_is_blocked(self):
+        res, cmd, env, _ = self.launch(license="cfd_pro")
+        self.assertFalse(res["ok"])
+        self.assertIn("CFD Pro", res["error"])
+        self.assertIsNone(cmd)  # Popen は呼ばれない
+
+    def test_cfd_pro_via_launcher_adds_nothing(self):
+        res, cmd, env, _ = self.launch(useLauncher=True, license="cfd_pro")
+        self.assertTrue(res["ok"], res)
+        self.assertNotIn("FLUENT_LAUNCHER_OPTIONS", env)
+
+    def test_launcher_mode_license_uses_env(self):
+        res, cmd, env, _ = self.launch(useLauncher=True, license="enterprise")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(cmd[1], "-i")  # Launcher 表示時はモード等の引数を渡さない
+        self.assertEqual(env["FLUENT_LAUNCHER_OPTIONS"], "-license=enterprise")
+
+    def test_launcher_mode_license_replaces_existing_token(self):
+        res, cmd, env, _ = self.launch(
+            useLauncher=True, license="hpc_ultimate",
+            base_env={"PATH": "/bin", "FLUENT_LAUNCHER_OPTIONS": "-foo -license=premium -bar"},
+        )
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(env["FLUENT_LAUNCHER_OPTIONS"], "-foo -bar -license=hpc_ultimate")
+
+    def test_launcher_mode_unspecified_license_strips_existing_token(self):
+        res, cmd, env, _ = self.launch(
+            useLauncher=True, license="",
+            base_env={"PATH": "/bin", "FLUENT_LAUNCHER_OPTIONS": "-foo -license=premium"},
+        )
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(env["FLUENT_LAUNCHER_OPTIONS"], "-foo")
+
+    def test_license_and_gpu_combine_on_direct_launch(self):
+        res, cmd, env, _ = self.launch(
+            solverType="gpu", gpuRemap=False, gpuHybridPrecision=False, license="premium",
+        )
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(cmd[1:5], ["3ddp", "-t8", "-gpu", "-license=premium"])
+
+    def test_invalid_license_value_falls_back_to_unspecified(self):
+        res, cmd, env, _ = self.launch(license="not_a_real_license")
+        self.assertTrue(res["ok"], res)
+        self.assertFalse([a for a in cmd if a.startswith("-license=")])
+
+
 class TestDefaults(LauncherTestBase):
     def test_06_save_and_restore_after_restart(self):
         api = self._default_api()
         settings = {
             "version": "v252", "product": "solver", "dim": "2d", "dp": False, "procs": "12",
             "japanese": True, "solverType": "gpu", "gpuRemap": False, "gpuHybridPrecision": True,
+            "license": "enterprise",
         }
         res = api.save_defaults(settings)
         self.assertTrue(res["ok"], res)

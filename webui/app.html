@@ -74,6 +74,17 @@
             <button type="button" class="seg-btn" data-value="gpu">Native GPU Solver</button>
           </div>
         </div>
+        <div class="control-row" id="licenseRow">
+          <label class="field-label">ライセンス</label>
+          <div class="segmented" id="licenseSeg" data-group="license" role="group" aria-label="ライセンス">
+            <button type="button" class="seg-btn" data-value="">未指定</button>
+            <button type="button" class="seg-btn" data-value="premium">Premium</button>
+            <button type="button" class="seg-btn" data-value="enterprise">Enterprise</button>
+            <button type="button" class="seg-btn" data-value="hpc_ultimate">HPC Ultimate</button>
+            <button type="button" class="seg-btn" data-value="cfd_pro">CFD Pro</button>
+          </div>
+        </div>
+        <p class="control-hint" id="licenseHint" role="note" hidden></p>
         <div class="control-row" id="gpuOptionsRow" hidden>
           <label class="field-label">GPU オプション</label>
           <div class="gpu-options">

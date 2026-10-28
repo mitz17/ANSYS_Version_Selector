@@ -15,12 +15,15 @@
     solverType: "cpu",
     gpuRemap: true,
     gpuHybridPrecision: true,
+    license: "",
     gpuRules: { gpuMinRelease: 231, gpuRemapMinRelease: 251, gpuHybridMinRelease: 261 },
     hasSavedDefaults: false,
   };
 
   // セグメントコントロールの表示を外部から切り替えるための setter
   const segSetters = {};
+
+  const LICENSE_VALUES = new Set(["", "premium", "enterprise", "hpc_ultimate", "cfd_pro"]);
 
   const $ = (id) => document.getElementById(id);
 
@@ -208,6 +211,14 @@
     return null;
   }
 
+  // CFD Pro はコマンドラインから指定できないため、直接起動のときだけ止める
+  function licenseBlockingError(useLauncher) {
+    if (state.license === "cfd_pro" && !useLauncher) {
+      return "CFD Pro はコマンドラインから指定できません。「Fluent Launcherを起動」から起動し、画面でライセンスを選択してください。";
+    }
+    return null;
+  }
+
   function setCheckboxEnabled(checkId, labelId, enabled) {
     const input = $(checkId);
     input.disabled = !enabled;
@@ -259,6 +270,17 @@
     hint.textContent = notes.join("\n");
     hint.hidden = notes.length === 0;
     hint.classList.toggle("warn", warn);
+
+    const licenseHint = $("licenseHint");
+    if (state.license === "cfd_pro") {
+      licenseHint.textContent = "CFD Pro はコマンドラインから指定できません。「Fluent Launcherを起動」から起動し、画面でライセンスを選択してください。";
+      licenseHint.hidden = false;
+      licenseHint.classList.add("warn");
+    } else {
+      licenseHint.textContent = "";
+      licenseHint.hidden = true;
+      licenseHint.classList.remove("warn");
+    }
   }
 
   // UI の現在値（保存・起動に使う。キー名は Python と共通）
@@ -273,6 +295,7 @@
       solverType: state.solverType,
       gpuRemap: state.gpuRemap,
       gpuHybridPrecision: state.gpuHybridPrecision,
+      license: state.license,
     };
   }
 
@@ -293,11 +316,13 @@
     if (s.solverType === "cpu" || s.solverType === "gpu") state.solverType = s.solverType;
     if (typeof s.gpuRemap === "boolean") state.gpuRemap = s.gpuRemap;
     if (typeof s.gpuHybridPrecision === "boolean") state.gpuHybridPrecision = s.gpuHybridPrecision;
+    if (typeof s.license === "string" && LICENSE_VALUES.has(s.license)) state.license = s.license;
 
     if (segSetters.product) segSetters.product(state.product);
     if (segSetters.dim) segSetters.dim(state.dim);
     if (segSetters.proc) segSetters.proc(state.proc);
     if (segSetters.solverType) segSetters.solverType(state.solverType);
+    if (segSetters.license) segSetters.license(state.license);
     $("dpCheck").checked = state.dp;
     $("japaneseCheck").checked = state.japanese;
     renderVersionList();
@@ -473,12 +498,13 @@
       procs: state.proc,
     };
     if (state.appKind === "fluent") {
-      const blocking = gpuBlockingError(!!useLauncher);
+      const blocking = gpuBlockingError(!!useLauncher) || licenseBlockingError(!!useLauncher);
       if (blocking) {
         showToast(blocking, "error");
         return;
       }
       payload.japanese = state.japanese;
+      payload.license = state.license;
       Object.assign(payload, effectiveGpuOptions(!!useLauncher));
     }
     const res = await api().launch(payload);
@@ -525,6 +551,7 @@
       segSetters.dim = wireSegmented("dimSeg", state.dim, (v) => { state.dim = v; updateFluentControls(); });
       segSetters.proc = wireSegmented("procSeg", state.proc, (v) => { state.proc = v; });
       segSetters.solverType = wireSegmented("solverTypeSeg", state.solverType, (v) => { state.solverType = v; updateFluentControls(); });
+      segSetters.license = wireSegmented("licenseSeg", state.license, (v) => { state.license = v; updateFluentControls(); });
       $("dpCheck").checked = state.dp;
       $("dpCheck").addEventListener("change", (e) => { state.dp = e.target.checked; updateFluentControls(); });
       $("japaneseCheck").checked = state.japanese;

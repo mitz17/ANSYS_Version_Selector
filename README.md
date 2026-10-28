@@ -103,6 +103,7 @@ Fluent バージョン選択ツールは、指定ファイルに応じて一時�
 - 読込ファイルに応じたジャーナル生成
 - 日本語 GUI での起動
 - CPU Solver / Native GPU Solver の切替（GPU Remapping / GPU Hybrid Precision）
+- ライセンスレベルの明示的な選択（Premium / Enterprise / HPC Ultimate / CFD Pro）
 - 起動設定のデフォルト保存・復元
 
 ### 起動設定
@@ -114,6 +115,7 @@ Fluent 用の設定カードに、以下の項目があります。
 | 言語: 日本語で起動 | ON のとき Fluent プロセスに環境変数 `lang=ja` を渡します。OFF のときは何も設定せず、システムの環境に従います。 |
 | ソルバー種別 | `CPU Solver` / `Native GPU Solver` |
 | GPU オプション | `GPU Remapping` / `GPU Hybrid Precision`（Native GPU Solver 選択時のみ表示。初期値はどちらも ON） |
+| ライセンス | `未指定` / `Premium` / `Enterprise` / `HPC Ultimate` / `CFD Pro` |
 
 - 環境変数は起動する Fluent プロセスにだけ渡します。PC 全体の環境変数は変更しません。
 - Windows では環境変数名の大文字・小文字が区別されないため、既存の `LANG` などは `lang=ja` で置き換えて、重複して渡らないようにしています。
@@ -140,6 +142,20 @@ Native GPU Solver を選ぶと、起動コマンドに `-gpu` を追加します
 - 「Fluent Launcherを起動」: 従来どおり、モード・並列数などの引数は渡さずに Fluent Launcher を表示します。Native GPU Solver を選んでいる場合は、有効な GPU オプションを `FLUENT_LAUNCHER_OPTIONS` に追加します（例: `FLUENT_LAUNCHER_OPTIONS=-gpu_remap -gpu_hybrid_precision`）。既存のオプションは残し、重複は追加しません。Native GPU Solver 自体は、Fluent Launcher の画面で選択してください。
 - CPU Solver またはメッシングの場合は、`FLUENT_LAUNCHER_OPTIONS` から GPU 系のオプションを取り除きます。
 
+### ライセンスレベル
+
+| ライセンス | 渡す引数 |
+| --- | --- |
+| 未指定 | 何も渡しません（従来どおり） |
+| Premium | `-license=premium` |
+| Enterprise | `-license=enterprise` |
+| HPC Ultimate | `-license=hpc_ultimate` |
+| CFD Pro | コマンドラインから指定できません。「Fluent Launcherを起動」で起動し、画面から選んでください |
+
+- 「Fluentを起動」（直接起動）: `-license=...` をコマンドライン引数で渡します。CFD Pro を選んだ状態で直接起動しようとすると、警告を表示して起動を止めます。
+- 「Fluent Launcherを起動」: `-license=...` を `FLUENT_LAUNCHER_OPTIONS` に追加します（GPU オプションと同様、既存のオプションは残し重複は追加しません）。CFD Pro を選んだ場合は何も付けず、Fluent Launcher の画面で選択してもらいます。
+- ライセンスを選び直すと、`FLUENT_LAUNCHER_OPTIONS` 内の古い `-license=...` は入れ替わります（複数残りません）。
+
 ### 起動コマンドの例
 
 | 設定 | コマンド / 環境変数 |
@@ -148,12 +164,14 @@ Native GPU Solver を選ぶと、起動コマンドに `-gpu` を追加します
 | 上記 + 日本語 | 同上 + 環境変数 `lang=ja` |
 | Native GPU（Remapping・Hybrid ON） | `fluent.exe 3ddp -t8 -gpu -gpu_remap -gpu_hybrid_precision -i <journal>` |
 | Native GPU + 日本語 | 同上 + 環境変数 `lang=ja` |
+| CPU + Enterprise ライセンス | `fluent.exe 3ddp -t8 -license=enterprise -i <journal>` |
 | メッシング | `fluent.exe -meshing 3d -t8 -i <journal>` |
 | Fluent Launcher（GPU・日本語） | `fluent.exe -i <journal>` + `lang=ja`、`FLUENT_LAUNCHER_OPTIONS=-gpu_remap -gpu_hybrid_precision` |
+| Fluent Launcher（HPC Ultimate ライセンス） | `fluent.exe -i <journal>` + `FLUENT_LAUNCHER_OPTIONS=-license=hpc_ultimate` |
 
 ### デフォルト設定の保存
 
-- 「現在の設定をデフォルトとして保存」を押すと、現在の起動設定を `fluent_versions.json` に保存します。保存されるのは、選択中のバージョン、ソルバ/メッシング、2D/3D、Double Precision、並列数、日本語起動、ソルバー種別、GPU Remapping、GPU Hybrid Precision です。
+- 「現在の設定をデフォルトとして保存」を押すと、現在の起動設定を `fluent_versions.json` に保存します。保存されるのは、選択中のバージョン、ソルバ/メッシング、2D/3D、Double Precision、並列数、日本語起動、ソルバー種別、GPU Remapping、GPU Hybrid Precision、ライセンスです。
 - 次回起動時は、保存した設定が自動で復元されます。
 - 「保存したデフォルトを適用」を押すと、保存した設定（バージョン、CPU/GPU、言語、並列数など）を画面に再適用します。保存内容は変わりません。デフォルトを保存していない間はボタンが無効です。
 - 「初期設定にリセット」を押すと、確認のうえ保存済みのデフォルトを削除し、アプリの初期値に戻します。登録済みのバージョンは削除されません。

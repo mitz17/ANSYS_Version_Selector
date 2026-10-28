@@ -7,7 +7,8 @@ Fluent バージョン選択ツール
 - 対象拡張子: .msh, .msh.h5, .cas, .cas.h5, .dat, .dat.h5
 - 製品モード: ソルバ / メッシング
 - ソルバ: 2D/3D, Double Precision, 並列数の指定
-- 起動設定: 日本語起動 (lang=ja), CPU / Native GPU Solver, GPU Remapping, GPU Hybrid Precision
+- 起動設定: 日本語起動 (lang=ja), CPU / Native GPU Solver, GPU Remapping, GPU Hybrid Precision,
+  ライセンスレベル (-license=premium / enterprise / hpc_ultimate。CFD Pro は Fluent Launcher から選択)
 - 設定: fluent.exe のパスをバージョン名と紐付けて保存（JSON）
 - デフォルト設定: 上記の起動設定を同じ JSON の "defaults" に保存し、次回起動時に復元
 """
@@ -53,6 +54,12 @@ GPU_ARG = "-gpu"
 GPU_REMAP_ARG = "-gpu_remap"
 GPU_HYBRID_PRECISION_ARG = "-gpu_hybrid_precision"
 
+# ライセンスレベル。"" は未指定（従来どおり何も付けない）。
+# CFD Pro はコマンドラインから指定する方法が無く、Fluent Launcher の画面から選ぶ必要がある。
+LICENSE_ARG_PREFIX = "-license="
+LICENSE_CLI_VALUES = ("premium", "enterprise", "hpc_ultimate")
+LICENSE_VALUES = ("", "premium", "enterprise", "hpc_ultimate", "cfd_pro")
+
 # 各機能が使える最小リリース（3 桁の Ansys リリース番号: 251 = 2025 R1）
 #  - Native GPU Solver (-gpu)             : 2023 R1 以降
 #  - CPU/GPU Remapping (-gpu_remap)       : 2025 R1 マニュアルで記載あり（2024 R2 には記載なし）
@@ -72,6 +79,7 @@ FACTORY_DEFAULTS = {
     "solverType": "cpu",            # cpu / gpu (Native GPU Solver)
     "gpuRemap": True,               # GPU Remapping
     "gpuHybridPrecision": True,     # GPU Hybrid Precision
+    "license": "",                  # "" / premium / enterprise / hpc_ultimate / cfd_pro
 }
 
 
@@ -165,6 +173,9 @@ def normalize_fluent_settings(raw, versions: dict | None = None) -> dict:
     solver_type = src.get("solverType")
     out["solverType"] = solver_type if solver_type in ("cpu", "gpu") else FACTORY_DEFAULTS["solverType"]
 
+    license_value = src.get("license")
+    out["license"] = license_value if license_value in LICENSE_VALUES else FACTORY_DEFAULTS["license"]
+
     for key in ("dp", "japanese", "gpuRemap", "gpuHybridPrecision"):
         out[key] = to_bool(src.get(key), FACTORY_DEFAULTS[key])
     return out
@@ -192,12 +203,18 @@ def get_env_ci(env: dict, name: str) -> str | None:
     return None
 
 
-def merge_launcher_options(existing: str | None, add_tokens: list[str], strip_all_gpu: bool) -> str:
-    """FLUENT_LAUNCHER_OPTIONS の既存値を維持しつつ、GPU 関連トークンを入れ替える。
+def merge_launcher_options(
+    existing: str | None,
+    add_tokens: list[str],
+    strip_all_gpu: bool,
+    strip_license: bool = False,
+) -> str:
+    """FLUENT_LAUNCHER_OPTIONS の既存値を維持しつつ、GPU・ライセンス関連トークンを入れ替える。
 
     - 本ツールが管理するトークン (-gpu, -gpu_remap, -gpu_hybrid_precision) は一旦除去してから
       必要なものだけ追加する（重複防止）。
     - strip_all_gpu=True (CPU Solver / メッシング) のときは -gpu=1,2 等も含めて GPU 系を全て除去する。
+    - strip_license=True のときは -license=... を値に関わらず除去する（選択し直すたび入れ替える）。
     - それ以外の起動オプションは順序を保って残す。
     """
     managed = {GPU_ARG, GPU_REMAP_ARG, GPU_HYBRID_PRECISION_ARG}
@@ -208,12 +225,42 @@ def merge_launcher_options(existing: str | None, add_tokens: list[str], strip_al
             continue
         if strip_all_gpu and low.startswith("-gpu"):
             continue
+        if strip_license and low.startswith(LICENSE_ARG_PREFIX):
+            continue
         if tok not in tokens:
             tokens.append(tok)
     for tok in add_tokens:
         if tok not in tokens:
             tokens.append(tok)
     return " ".join(tokens)
+
+
+def build_license_args(
+    license_value: str,
+    use_launcher: bool,
+    version_label: str = "",
+) -> tuple[list[str] | None, str | None]:
+    """ライセンス指定の引数を組み立てる。CFD Pro を直接起動で選んだ場合は (None, エラー) を返す。
+
+    Premium / Enterprise / HPC Ultimate は "-license=<value>" を返す（直接起動では
+    コマンドライン引数、Fluent Launcher 起動では FLUENT_LAUNCHER_OPTIONS に回す。
+    振り分けは呼び出し側で行う）。CFD Pro は CLI から指定できないため、Fluent Launcher
+    起動時のみ許可し、画面側で選んでもらう（引数は付けない）。
+    """
+    if not license_value:
+        return [], None
+    if license_value == "cfd_pro":
+        if use_launcher:
+            return [], None
+        label = version_label or "選択したバージョン"
+        return None, (
+            "CFD Pro はコマンドラインから指定できません。"
+            "「Fluent Launcherを起動」から起動し、画面でライセンスを選択してください。"
+            f"（{label}）"
+        )
+    if license_value not in LICENSE_CLI_VALUES:
+        return [], None
+    return [f"{LICENSE_ARG_PREFIX}{license_value}"], None
 
 
 def build_launch_options(
@@ -269,6 +316,7 @@ def build_launch_env_overrides(
     japanese: bool,
     gpu_args: list[str],
     use_launcher: bool,
+    license_token: str | None = None,
 ) -> dict:
     """Fluent プロセスにだけ適用する環境変数の差分を作る（PC 全体の環境変数は変更しない）。
 
@@ -276,7 +324,8 @@ def build_launch_env_overrides(
     - 日本語 OFF: 何も設定しない（システム環境に従う）
     - FLUENT_LAUNCHER_OPTIONS:
         * Fluent Launcher 起動時 + GPU: -gpu_remap / -gpu_hybrid_precision のうち有効なものを追加
-        * 直接起動時: GPU オプションはコマンドライン引数で渡すため、重複しないよう本ツール管理の
+        * Fluent Launcher 起動時 + ライセンス指定（Premium/Enterprise/HPC Ultimate）: -license=... を追加
+        * 直接起動時: GPU・ライセンスはコマンドライン引数で渡すため、重複しないよう本ツール管理の
           トークンを取り除く（その他の既存オプションは維持）
         * CPU / メッシング: GPU 系トークンを全て取り除く
     """
@@ -286,14 +335,18 @@ def build_launch_env_overrides(
 
     existing = get_env_ci(base_env, LAUNCHER_OPTIONS_ENV)
     is_gpu = bool(gpu_args)
+    add: list[str] = []
     if use_launcher and is_gpu:
-        add = [a for a in gpu_args if a != GPU_ARG]
-        merged = merge_launcher_options(existing, add, strip_all_gpu=False)
-    else:
-        if existing is None:
-            return overrides
-        merged = merge_launcher_options(existing, [], strip_all_gpu=not is_gpu)
+        add.extend(a for a in gpu_args if a != GPU_ARG)
+    if use_launcher and license_token:
+        add.append(license_token)
 
+    if not add and existing is None:
+        return overrides
+
+    merged = merge_launcher_options(
+        existing, add, strip_all_gpu=not is_gpu, strip_license=True
+    )
     if merged != (existing or ""):
         overrides[LAUNCHER_OPTIONS_ENV] = merged or None
     return overrides
@@ -559,6 +612,10 @@ class FluentAPI(WebAPI):
         if solver_type not in ("cpu", "gpu"):
             solver_type = "cpu"
 
+        license_value = payload.get("license") or ""
+        if license_value not in LICENSE_VALUES:
+            license_value = ""
+
         release = detect_fluent_release(ver, exe)
         gpu_args, gpu_error = build_launch_options(
             product,
@@ -574,13 +631,21 @@ class FluentAPI(WebAPI):
         if gpu_error:
             return {"ok": False, "error": gpu_error}
 
+        license_args, license_error = build_license_args(license_value, use_launcher, ver)
+        if license_error:
+            return {"ok": False, "error": license_error}
+
+        # 直接起動: コマンドライン引数で渡す / Fluent Launcher 起動: 環境変数に回す
+        cli_license_args = [] if use_launcher else (license_args or [])
+        license_token = (license_args or [None])[0] if use_launcher else None
+
         env_override = build_launch_env_overrides(
-            prepare_external_launch_env(), japanese, gpu_args or [], use_launcher
+            prepare_external_launch_env(), japanese, gpu_args or [], use_launcher, license_token
         ) or None
 
         return launch_fluent(
             exe, mode, product, journal, workdir, n_procs, env_override,
-            use_launcher, gpu_args,
+            use_launcher, (gpu_args or []) + cli_license_args,
         )
 
 

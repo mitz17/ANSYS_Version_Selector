@@ -7,17 +7,22 @@ Fluent バージョン選択ツール
 - 対象拡張子: .msh, .msh.h5, .cas, .cas.h5, .dat, .dat.h5
 - 製品モード: ソルバ / メッシング
 - ソルバ: 2D/3D, Double Precision, 並列数の指定
+- 起動設定: 日本語起動 (lang=ja), CPU / Native GPU Solver, GPU Remapping, GPU Hybrid Precision,
+  ライセンスレベル (-license=premium / enterprise / hpc_ultimate。CFD Pro は Fluent Launcher から選択)
 - 設定: fluent.exe のパスをバージョン名と紐付けて保存（JSON）
+- デフォルト設定: 上記の起動設定を同じ JSON の "defaults" に保存し、次回起動時に復元
 """
 
 from __future__ import annotations
 
-import os
+import json
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import webview
 
@@ -36,10 +41,45 @@ DEFAULT_SCAN_ROOTS = [
     r"C:\\ANSYS-Inc",
 ]
 SUPPORTED_EXTS = [".msh", ".msh.h5", ".cas", ".cas.h5", ".dat", ".dat.h5"]
-PREFERRED_LOCALE_ENV = {
-    "FLUENT_LANG": "ja-JP",
-    "LANG": "ja_JP.UTF-8",
-    "LC_ALL": "ja_JP.UTF-8",
+
+# 日本語 GUI で起動するときに Fluent プロセスへ渡す環境変数。
+# 以前は PREFERRED_LOCALE_ENV (FLUENT_LANG / LANG / LC_ALL) を「未設定なら常に」適用していたが、
+# 「日本語で起動」チェックボックスの ON/OFF を確実に反映させるため、ON のときだけ適用する方式に変更した。
+# Windows の環境変数名は大文字・小文字を区別しないため、適用時は既存の LANG / Lang 等を置き換える。
+JAPANESE_LANG_ENV = {"lang": "ja"}
+
+# Fluent Launcher 向けの起動オプションを渡す環境変数（ユーザー指定）
+LAUNCHER_OPTIONS_ENV = "FLUENT_LAUNCHER_OPTIONS"
+GPU_ARG = "-gpu"
+GPU_REMAP_ARG = "-gpu_remap"
+GPU_HYBRID_PRECISION_ARG = "-gpu_hybrid_precision"
+
+# ライセンスレベル。"" は未指定（従来どおり何も付けない）。
+# CFD Pro はコマンドラインから指定する方法が無く、Fluent Launcher の画面から選ぶ必要がある。
+LICENSE_ARG_PREFIX = "-license="
+LICENSE_CLI_VALUES = ("premium", "enterprise", "hpc_ultimate")
+LICENSE_VALUES = ("", "premium", "enterprise", "hpc_ultimate", "cfd_pro")
+
+# 各機能が使える最小リリース（3 桁の Ansys リリース番号: 251 = 2025 R1）
+#  - Native GPU Solver (-gpu)             : 2023 R1 以降
+#  - CPU/GPU Remapping (-gpu_remap)       : 2025 R1 マニュアルで記載あり（2024 R2 には記載なし）
+#  - Hybrid Precision (-gpu_hybrid_precision): 2026 R1 で β 機能として追加（3ddp と併用）
+GPU_MIN_RELEASE = 231
+GPU_REMAP_MIN_RELEASE = 251
+GPU_HYBRID_MIN_RELEASE = 261
+
+# デフォルト設定（Python / JavaScript で同じキー名を使う）
+FACTORY_DEFAULTS = {
+    "version": "",
+    "product": "solver",            # solver / meshing
+    "dim": "3d",                    # 2d / 3d
+    "dp": True,                     # Double Precision
+    "procs": "4",                   # 並列プロセス数
+    "japanese": False,              # 日本語で起動
+    "solverType": "cpu",            # cpu / gpu (Native GPU Solver)
+    "gpuRemap": True,               # GPU Remapping
+    "gpuHybridPrecision": True,     # GPU Hybrid Precision
+    "license": "",                  # "" / premium / enterprise / hpc_ultimate / cfd_pro
 }
 
 
@@ -62,6 +102,254 @@ def find_fluent_exes() -> dict[str, str]:
             if exe.exists():
                 found[vdir.name] = str(exe)
     return found
+
+
+def detect_fluent_release(version_name: str = "", exe_path: str = "") -> int | None:
+    """バージョン名や fluent.exe のパスから 3 桁のリリース番号 (例: 252) を推定する。
+
+    パス中の ...\\v252\\fluent\\... を優先し、見つからなければバージョン名 (v252 等) を見る。
+    判定できない場合は None。
+    """
+    for part in reversed(PureWindowsPath(exe_path or "").parts):
+        m = re.fullmatch(r"v(\d{3})", part.strip().lower())
+        if m:
+            return int(m.group(1))
+    name = (version_name or "").strip().lower()
+    m = re.fullmatch(r"v?(\d{3})", name) or re.search(r"(?<![0-9a-z])v(\d{3})(?![0-9])", name)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def format_release(release: int) -> str:
+    return f"{2000 + release // 10} R{release % 10}"
+
+
+def to_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off", ""):
+            return False
+    return default
+
+
+def normalize_fluent_settings(raw, versions: dict | None = None) -> dict:
+    """保存値・UI からの値を検証し、不足や不正値を既定値で補う。
+
+    versions を渡した場合、保存済みバージョンが存在しなければ先頭の利用可能バージョンへ
+    フォールバックする（登録が無ければ空文字）。
+    """
+    src = raw if isinstance(raw, dict) else {}
+    out = dict(FACTORY_DEFAULTS)
+
+    version = src.get("version")
+    out["version"] = version.strip() if isinstance(version, str) else ""
+    if versions is not None:
+        names = list(versions.keys())
+        if out["version"] not in versions:
+            out["version"] = names[0] if names else ""
+
+    product = src.get("product")
+    out["product"] = product if product in ("solver", "meshing") else FACTORY_DEFAULTS["product"]
+
+    dim = src.get("dim")
+    out["dim"] = dim if dim in ("2d", "3d") else FACTORY_DEFAULTS["dim"]
+
+    procs = src.get("procs")
+    try:
+        procs_int = int(str(procs).strip())
+    except (TypeError, ValueError):
+        procs_int = 0
+    out["procs"] = str(procs_int) if procs_int >= 1 else FACTORY_DEFAULTS["procs"]
+
+    solver_type = src.get("solverType")
+    out["solverType"] = solver_type if solver_type in ("cpu", "gpu") else FACTORY_DEFAULTS["solverType"]
+
+    license_value = src.get("license")
+    out["license"] = license_value if license_value in LICENSE_VALUES else FACTORY_DEFAULTS["license"]
+
+    for key in ("dp", "japanese", "gpuRemap", "gpuHybridPrecision"):
+        out[key] = to_bool(src.get(key), FACTORY_DEFAULTS[key])
+    return out
+
+
+def apply_env_overrides(env: dict, overrides: dict | None) -> dict:
+    """環境変数を大文字・小文字を区別せずに上書きする（Windows の仕様に合わせる）。
+
+    値が None のキーは削除する。os.environ.copy() は Windows では大文字キーになるため、
+    単純な dict.update() だと "LANG" と "lang" が重複して両方渡ってしまう問題を防ぐ。
+    """
+    result = dict(env)
+    for key, value in (overrides or {}).items():
+        for existing in [k for k in result if k.upper() == key.upper()]:
+            del result[existing]
+        if value is not None:
+            result[key] = str(value)
+    return result
+
+
+def get_env_ci(env: dict, name: str) -> str | None:
+    for k, v in env.items():
+        if k.upper() == name.upper():
+            return v
+    return None
+
+
+def merge_launcher_options(
+    existing: str | None,
+    add_tokens: list[str],
+    strip_all_gpu: bool,
+    strip_license: bool = False,
+) -> str:
+    """FLUENT_LAUNCHER_OPTIONS の既存値を維持しつつ、GPU・ライセンス関連トークンを入れ替える。
+
+    - 本ツールが管理するトークン (-gpu, -gpu_remap, -gpu_hybrid_precision) は一旦除去してから
+      必要なものだけ追加する（重複防止）。
+    - strip_all_gpu=True (CPU Solver / メッシング) のときは -gpu=1,2 等も含めて GPU 系を全て除去する。
+    - strip_license=True のときは -license=... を値に関わらず除去する（選択し直すたび入れ替える）。
+    - それ以外の起動オプションは順序を保って残す。
+    """
+    managed = {GPU_ARG, GPU_REMAP_ARG, GPU_HYBRID_PRECISION_ARG}
+    tokens: list[str] = []
+    for tok in (existing or "").split():
+        low = tok.lower()
+        if low in managed:
+            continue
+        if strip_all_gpu and low.startswith("-gpu"):
+            continue
+        if strip_license and low.startswith(LICENSE_ARG_PREFIX):
+            continue
+        if tok not in tokens:
+            tokens.append(tok)
+    for tok in add_tokens:
+        if tok not in tokens:
+            tokens.append(tok)
+    return " ".join(tokens)
+
+
+def build_license_args(
+    license_value: str,
+    use_launcher: bool,
+    version_label: str = "",
+) -> tuple[list[str] | None, str | None]:
+    """ライセンス指定の引数を組み立てる。CFD Pro を直接起動で選んだ場合は (None, エラー) を返す。
+
+    Premium / Enterprise / HPC Ultimate は "-license=<value>" を返す（直接起動では
+    コマンドライン引数、Fluent Launcher 起動では FLUENT_LAUNCHER_OPTIONS に回す。
+    振り分けは呼び出し側で行う）。CFD Pro は CLI から指定できないため、Fluent Launcher
+    起動時のみ許可し、画面側で選んでもらう（引数は付けない）。
+    """
+    if not license_value:
+        return [], None
+    if license_value == "cfd_pro":
+        if use_launcher:
+            return [], None
+        label = version_label or "選択したバージョン"
+        return None, (
+            "CFD Pro はコマンドラインから指定できません。"
+            "「Fluent Launcherを起動」から起動し、画面でライセンスを選択してください。"
+            f"（{label}）"
+        )
+    if license_value not in LICENSE_CLI_VALUES:
+        return [], None
+    return [f"{LICENSE_ARG_PREFIX}{license_value}"], None
+
+
+def build_launch_options(
+    product: str,
+    dim: str,
+    solver_type: str,
+    gpu_remap: bool,
+    gpu_hybrid: bool,
+    dp: bool,
+    release: int | None,
+    version_label: str = "",
+    use_launcher: bool = False,
+) -> tuple[list[str] | None, str | None]:
+    """GPU 関連の起動引数を組み立てる。互換性がなければ (None, エラーメッセージ) を返す。
+
+    CPU Solver とメッシングでは GPU 引数を一切付けない。
+    Fluent Launcher 起動時は次元・精度を Launcher 側で選ぶため、2D / 精度のチェックは行わない。
+    """
+    if product == "meshing" or solver_type != "gpu":
+        return [], None
+
+    label = version_label or "選択したバージョン"
+    if dim == "2d" and not use_launcher:
+        return None, "Native GPU Solver は 3D のみ対応しています。3D を選択するか CPU Solver で起動してください。"
+    if release is not None and release < GPU_MIN_RELEASE:
+        return None, (
+            f"{label} は Native GPU Solver に対応していません"
+            f"（{format_release(GPU_MIN_RELEASE)} 以降が必要）。CPU Solver で起動してください。"
+        )
+
+    args = [GPU_ARG]
+    if gpu_remap:
+        if release is not None and release < GPU_REMAP_MIN_RELEASE:
+            return None, (
+                f"{label} は GPU Remapping (-gpu_remap) に対応していません"
+                f"（{format_release(GPU_REMAP_MIN_RELEASE)} 以降が必要）。チェックを外してください。"
+            )
+        args.append(GPU_REMAP_ARG)
+    if gpu_hybrid:
+        if not dp and not use_launcher:
+            return None, "GPU Hybrid Precision は Double Precision (3ddp) と組み合わせて使用します。Double Precision を有効にしてください。"
+        if release is not None and release < GPU_HYBRID_MIN_RELEASE:
+            return None, (
+                f"{label} は GPU Hybrid Precision (-gpu_hybrid_precision) に対応していません"
+                f"（{format_release(GPU_HYBRID_MIN_RELEASE)} 以降が必要）。チェックを外してください。"
+            )
+        args.append(GPU_HYBRID_PRECISION_ARG)
+    return args, None
+
+
+def build_launch_env_overrides(
+    base_env: dict,
+    japanese: bool,
+    gpu_args: list[str],
+    use_launcher: bool,
+    license_token: str | None = None,
+) -> dict:
+    """Fluent プロセスにだけ適用する環境変数の差分を作る（PC 全体の環境変数は変更しない）。
+
+    - 日本語 ON: lang=ja（既存の LANG/Lang 等は大文字小文字を無視して置き換え）
+    - 日本語 OFF: 何も設定しない（システム環境に従う）
+    - FLUENT_LAUNCHER_OPTIONS:
+        * Fluent Launcher 起動時 + GPU: -gpu_remap / -gpu_hybrid_precision のうち有効なものを追加
+        * Fluent Launcher 起動時 + ライセンス指定（Premium/Enterprise/HPC Ultimate）: -license=... を追加
+        * 直接起動時: GPU・ライセンスはコマンドライン引数で渡すため、重複しないよう本ツール管理の
+          トークンを取り除く（その他の既存オプションは維持）
+        * CPU / メッシング: GPU 系トークンを全て取り除く
+    """
+    overrides: dict[str, str | None] = {}
+    if japanese:
+        overrides.update(JAPANESE_LANG_ENV)
+
+    existing = get_env_ci(base_env, LAUNCHER_OPTIONS_ENV)
+    is_gpu = bool(gpu_args)
+    add: list[str] = []
+    if use_launcher and is_gpu:
+        add.extend(a for a in gpu_args if a != GPU_ARG)
+    if use_launcher and license_token:
+        add.append(license_token)
+
+    if not add and existing is None:
+        return overrides
+
+    merged = merge_launcher_options(
+        existing, add, strip_all_gpu=not is_gpu, strip_license=True
+    )
+    if merged != (existing or ""):
+        overrides[LAUNCHER_OPTIONS_ENV] = merged or None
+    return overrides
 
 
 # -------------------------- ジャーナル生成 --------------------------
@@ -143,6 +431,7 @@ def launch_fluent(
     n_procs: int,
     env_override: dict | None = None,
     use_launcher: bool = False,
+    extra_args: list[str] | None = None,
 ) -> dict:
     # README に合わせて一時ファイルにジャーナルを保存
     cleanup_old_journals()
@@ -176,10 +465,15 @@ def launch_fluent(
         if n_procs > 1:
             cmd.append("-t" + str(n_procs))
 
+        # Native GPU Solver 等の追加引数（例: -gpu -gpu_remap -gpu_hybrid_precision）
+        if extra_args:
+            cmd.extend(extra_args)
+
     cmd.extend(["-i", journal_path])
 
-    # 環境変数（日本語ロケール等）を上書きして起動
-    env = prepare_external_launch_env(env_override)
+    # 環境変数（日本語起動・Launcher オプション等）を Fluent プロセスにだけ適用して起動。
+    # Windows の大文字・小文字非区別に合わせて上書きする。
+    env = apply_env_overrides(prepare_external_launch_env(), env_override)
 
     try:
         subprocess.Popen(
@@ -188,15 +482,98 @@ def launch_fluent(
             env=env,
             close_fds=True,
         )
+    except FileNotFoundError:
+        return {"ok": False, "error": f"fluent.exe が見つかりません。バージョン設定のパスを確認してください:\n{fluent_exe}"}
+    except PermissionError as e:
+        return {"ok": False, "error": f"Fluent を起動する権限がありません:\n{e}"}
     except Exception as e:
         return {"ok": False, "error": f"Fluent の起動に失敗しました:\n{e}"}
-    return {"ok": True}
+    return {"ok": True, "command": cmd}
 
 
 # -------------------------- JS-API --------------------------
 
 class FluentAPI(WebAPI):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._ensure_valid_config()
+
+    # ---- 設定ファイルの健全性 ----
+    def _ensure_valid_config(self):
+        """JSON の破損・型不正に備える。旧形式 ({"versions": {...}} のみ) もそのまま読み込める。"""
+        if self.config_path.exists():
+            try:
+                json.loads(self.config_path.read_text(encoding="utf-8"))
+            except Exception:
+                # 破損した JSON は上書き前に退避しておく（バージョン登録の手動復旧用）
+                try:
+                    shutil.copy2(self.config_path, self.config_path.with_name(self.config_path.name + ".broken"))
+                except Exception:
+                    pass
+        if not isinstance(self.data, dict):
+            self.data = {"versions": {}}
+        versions = self.data.get("versions")
+        if not isinstance(versions, dict):
+            self.data["versions"] = {}
+        else:
+            self.data["versions"] = {str(k): str(v) for k, v in versions.items() if isinstance(v, str)}
+        if "defaults" in self.data and not isinstance(self.data.get("defaults"), dict):
+            self.data.pop("defaults", None)
+
+    # ---- デフォルト設定 ----
+    def _current_defaults(self) -> dict:
+        return normalize_fluent_settings(self.data.get("defaults"), self.data.get("versions") or {})
+
+    def get_bootstrap(self):
+        boot = super().get_bootstrap()
+        boot["fluentDefaults"] = self._current_defaults()
+        boot["fluentFactoryDefaults"] = normalize_fluent_settings({}, self.data.get("versions") or {})
+        boot["hasSavedDefaults"] = isinstance(self.data.get("defaults"), dict)
+        boot["fluentGpuRules"] = {
+            "gpuMinRelease": GPU_MIN_RELEASE,
+            "gpuRemapMinRelease": GPU_REMAP_MIN_RELEASE,
+            "gpuHybridMinRelease": GPU_HYBRID_MIN_RELEASE,
+        }
+        return boot
+
+    def get_defaults(self):
+        """保存済みのデフォルト設定を返す（「保存したデフォルトを適用」用）。
+
+        保存したバージョンが削除されている場合は先頭のバージョンにフォールバックし、
+        missingVersion に元のバージョン名を入れて返す。
+        """
+        saved = self.data.get("defaults")
+        if not isinstance(saved, dict):
+            return {"ok": False, "hasSavedDefaults": False,
+                    "error": "保存されたデフォルト設定がありません。「現在の設定をデフォルトとして保存」で保存してください。"}
+        defaults = self._current_defaults()
+        saved_version = saved.get("version") if isinstance(saved.get("version"), str) else ""
+        missing = saved_version if saved_version and saved_version != defaults["version"] else ""
+        return {"ok": True, "defaults": defaults, "hasSavedDefaults": True, "missingVersion": missing}
+
+    def save_defaults(self, settings: dict):
+        """現在の起動設定をデフォルトとして fluent_versions.json に保存（versions は維持）。"""
+        normalized = normalize_fluent_settings(settings, self.data.get("versions") or {})
+        self.data["defaults"] = normalized
+        try:
+            self._persist()
+        except Exception as e:
+            return {"ok": False, "error": f"設定の保存に失敗しました:\n{e}"}
+        return {"ok": True, "defaults": normalized}
+
+    def reset_defaults(self):
+        """「初期設定にリセット」: 保存済みのデフォルトを削除し、アプリの初期値を返す（versions は維持）。"""
+        self.data.pop("defaults", None)
+        try:
+            self._persist()
+        except Exception as e:
+            return {"ok": False, "error": f"設定の保存に失敗しました:\n{e}"}
+        return {"ok": True, "defaults": self._current_defaults()}
+
+    # ---- 起動 ----
     def launch(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            payload = {}
         fpath = (payload.get("file") or "").strip().strip('"')
         journal = "\n"
         workdir = Path.home()
@@ -215,7 +592,13 @@ class FluentAPI(WebAPI):
             return {"ok": False, "error": "選択したバージョンの fluent.exe が無効です。設定から修正してください。"}
 
         product = payload.get("product", "solver")
-        mode = resolve_mode(product, payload.get("dim", "3d"), bool(payload.get("dp", True)))
+        if product not in ("solver", "meshing"):
+            product = "solver"
+        dim = payload.get("dim", "3d")
+        if dim not in ("2d", "3d"):
+            dim = "3d"
+        dp = to_bool(payload.get("dp"), True)
+        mode = resolve_mode(product, dim, dp)
 
         try:
             n_procs = int(payload.get("procs") or 1)
@@ -223,14 +606,46 @@ class FluentAPI(WebAPI):
             n_procs = 1
         n_procs = max(1, n_procs)
 
-        # Prefer Japanese locale when possible without overriding user settings
-        env_override = {k: v for k, v in PREFERRED_LOCALE_ENV.items() if not os.environ.get(k)}
-        if not env_override:
-            env_override = None
+        use_launcher = to_bool(payload.get("useLauncher"), False)
+        japanese = to_bool(payload.get("japanese"), False)
+        solver_type = payload.get("solverType", "cpu")
+        if solver_type not in ("cpu", "gpu"):
+            solver_type = "cpu"
+
+        license_value = payload.get("license") or ""
+        if license_value not in LICENSE_VALUES:
+            license_value = ""
+
+        release = detect_fluent_release(ver, exe)
+        gpu_args, gpu_error = build_launch_options(
+            product,
+            dim,
+            solver_type,
+            to_bool(payload.get("gpuRemap"), False),
+            to_bool(payload.get("gpuHybridPrecision"), False),
+            dp,
+            release,
+            ver,
+            use_launcher,
+        )
+        if gpu_error:
+            return {"ok": False, "error": gpu_error}
+
+        license_args, license_error = build_license_args(license_value, use_launcher, ver)
+        if license_error:
+            return {"ok": False, "error": license_error}
+
+        # 直接起動: コマンドライン引数で渡す / Fluent Launcher 起動: 環境変数に回す
+        cli_license_args = [] if use_launcher else (license_args or [])
+        license_token = (license_args or [None])[0] if use_launcher else None
+
+        env_override = build_launch_env_overrides(
+            prepare_external_launch_env(), japanese, gpu_args or [], use_launcher, license_token
+        ) or None
 
         return launch_fluent(
             exe, mode, product, journal, workdir, n_procs, env_override,
-            bool(payload.get("useLauncher", False)),
+            use_launcher, (gpu_args or []) + cli_license_args,
         )
 
 
@@ -286,7 +701,7 @@ def main():
         url=str(resource_path("webui", "app.html")),
         js_api=api,
         width=880,
-        height=640,
+        height=720,
         min_size=(720, 480),
     )
     api._window = window

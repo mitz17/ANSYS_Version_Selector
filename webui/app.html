@@ -60,6 +60,50 @@
             <button type="button" class="seg-btn" data-value="24">24</button>
           </div>
         </div>
+        <div class="control-row">
+          <label class="field-label">言語</label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="japaneseCheck" />
+            <span>日本語で起動</span>
+          </label>
+        </div>
+        <div class="control-row" id="solverTypeRow">
+          <label class="field-label">ソルバー種別</label>
+          <div class="segmented" id="solverTypeSeg" data-group="solverType" role="group" aria-label="ソルバー種別">
+            <button type="button" class="seg-btn" data-value="cpu">CPU Solver</button>
+            <button type="button" class="seg-btn" data-value="gpu">Native GPU Solver</button>
+          </div>
+        </div>
+        <div class="control-row" id="licenseRow">
+          <label class="field-label">ライセンス</label>
+          <div class="segmented" id="licenseSeg" data-group="license" role="group" aria-label="ライセンス">
+            <button type="button" class="seg-btn" data-value="">未指定</button>
+            <button type="button" class="seg-btn" data-value="premium">Premium</button>
+            <button type="button" class="seg-btn" data-value="enterprise">Enterprise</button>
+            <button type="button" class="seg-btn" data-value="hpc_ultimate">HPC Ultimate</button>
+            <button type="button" class="seg-btn" data-value="cfd_pro">CFD Pro</button>
+          </div>
+        </div>
+        <p class="control-hint" id="licenseHint" role="note" hidden></p>
+        <div class="control-row" id="gpuOptionsRow" hidden>
+          <label class="field-label">GPU オプション</label>
+          <div class="gpu-options">
+            <label class="checkbox-label" id="gpuRemapLabel">
+              <input type="checkbox" id="gpuRemapCheck" />
+              <span>GPU Remapping</span>
+            </label>
+            <label class="checkbox-label" id="gpuHybridLabel">
+              <input type="checkbox" id="gpuHybridCheck" />
+              <span>GPU Hybrid Precision</span>
+            </label>
+          </div>
+        </div>
+        <p class="control-hint" id="gpuHint" role="note" hidden></p>
+        <div class="defaults-row">
+          <button type="button" class="btn btn-secondary btn-sm" id="saveDefaultsBtn">現在の設定をデフォルトとして保存</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="applyDefaultsBtn">保存したデフォルトを適用</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="resetDefaultsBtn">初期設定にリセット</button>
+        </div>
       </section>
     </main>
 

@@ -40,6 +40,9 @@
 
 * { box-sizing: border-box; }
 
+/* hidden 属性を display 指定 (.control-row の flex 等) より優先させる */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -303,6 +306,42 @@ html, body {
   cursor: pointer;
 }
 
+.checkbox-label.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.segmented.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ============ Fluent 起動設定 ============ */
+.gpu-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.control-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-line;
+}
+.control-hint.warn { color: var(--danger); }
+
+.defaults-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 /* ============ アクションフッター ============ */
 .actions {
   flex: 0 0 auto;
@@ -497,6 +536,9 @@ html, body {
   .actions { padding-inline: 16px; }
   .control-row { align-items: flex-start; flex-direction: column; gap: 6px; }
   .dim-controls { width: 100%; justify-content: space-between; }
+  .gpu-options { flex-direction: column; align-items: flex-start; }
+  .defaults-row { justify-content: stretch; }
+  .defaults-row .btn { flex: 1 1 100%; }
   .segmented { max-width: 100%; overflow-x: auto; }
 }
 

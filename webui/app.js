@@ -16,6 +16,7 @@
     gpuRemap: true,
     gpuHybridPrecision: true,
     gpuRules: { gpuMinRelease: 231, gpuRemapMinRelease: 251, gpuHybridMinRelease: 261 },
+    hasSavedDefaults: false,
   };
 
   // セグメントコントロールの表示を外部から切り替えるための setter
@@ -302,24 +303,52 @@
     renderVersionList();
   }
 
+  function updateDefaultsButtons() {
+    const btn = $("applyDefaultsBtn");
+    btn.disabled = !state.hasSavedDefaults;
+    btn.title = state.hasSavedDefaults ? "" : "保存されたデフォルト設定はまだありません";
+  }
+
   async function saveDefaults() {
     const res = await api().save_defaults(currentSettings());
     if (res && res.ok) {
+      state.hasSavedDefaults = true;
+      updateDefaultsButtons();
       showToast("現在の設定をデフォルトとして保存しました。");
     } else {
       showToast((res && res.error) || "デフォルト設定の保存に失敗しました。", "error");
     }
   }
 
+  // 保存したデフォルトを再適用（保存内容は変更しない）
+  async function applySavedDefaults() {
+    const res = await api().get_defaults();
+    if (res && res.ok) {
+      applySettings(res.defaults);
+      if (res.missingVersion) {
+        showToast(`保存したバージョン '${res.missingVersion}' が見つからないため '${res.defaults.version || "なし"}' を選択しました。`, "error");
+      } else {
+        showToast("保存したデフォルト設定を適用しました。");
+      }
+    } else {
+      state.hasSavedDefaults = !!(res && res.hasSavedDefaults);
+      updateDefaultsButtons();
+      showToast((res && res.error) || "デフォルト設定の読み込みに失敗しました。", "error");
+    }
+  }
+
+  // 保存内容を削除してアプリの初期値に戻す
   async function resetDefaults() {
-    const ok = await showConfirm("保存済みのデフォルト設定を削除し、初期設定に戻しますか？\n（登録済みのバージョンは削除されません）");
+    const ok = await showConfirm("保存したデフォルト設定を削除し、アプリの初期設定に戻しますか？\n（登録済みのバージョンは削除されません）");
     if (!ok) return;
     const res = await api().reset_defaults();
     if (res && res.ok) {
       applySettings(res.defaults);
-      showToast("初期設定に戻しました。");
+      state.hasSavedDefaults = false;
+      updateDefaultsButtons();
+      showToast("初期設定にリセットしました。");
     } else {
-      showToast((res && res.error) || "デフォルト設定のリセットに失敗しました。", "error");
+      showToast((res && res.error) || "初期設定へのリセットに失敗しました。", "error");
     }
   }
 
@@ -502,7 +531,10 @@
       $("japaneseCheck").addEventListener("change", (e) => { state.japanese = e.target.checked; });
       $("gpuRemapCheck").addEventListener("change", (e) => { state.gpuRemap = e.target.checked; });
       $("gpuHybridCheck").addEventListener("change", (e) => { state.gpuHybridPrecision = e.target.checked; });
+      state.hasSavedDefaults = !!bootstrap.hasSavedDefaults;
+      updateDefaultsButtons();
       $("saveDefaultsBtn").addEventListener("click", saveDefaults);
+      $("applyDefaultsBtn").addEventListener("click", applySavedDefaults);
       $("resetDefaultsBtn").addEventListener("click", resetDefaults);
       updateFluentControls();
     }

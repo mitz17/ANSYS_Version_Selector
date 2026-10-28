@@ -291,6 +291,28 @@ class TestDefaults(LauncherTestBase):
         self.assertEqual(data["defaults"]["version"], "v261")
         self.assertTrue(data["defaults"]["japanese"])
 
+    def test_apply_saved_defaults(self):
+        api = self._default_api()
+        res = api.get_defaults()
+        self.assertFalse(res["ok"])  # 未保存のときは適用できない
+        self.assertFalse(res["hasSavedDefaults"])
+        saved = {"version": "v252", "procs": "12", "japanese": True, "solverType": "gpu", "gpuRemap": False}
+        api.save_defaults(saved)
+        before = self.read_config()
+        res = api.get_defaults()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["missingVersion"], "")
+        for k, v in saved.items():
+            self.assertEqual(res["defaults"][k], v)
+        self.assertEqual(self.read_config(), before)  # 適用しても保存内容は変わらない
+        # 保存したバージョンが削除された場合はフォールバックし、元の名前を返す
+        api.delete_version("v252")
+        res = api.get_defaults()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["missingVersion"], "v252")
+        self.assertEqual(res["defaults"]["version"], "v222")
+        self.assertTrue(res["defaults"]["japanese"])
+
     def test_reset_defaults_keeps_versions(self):
         api = self._default_api()
         api.save_defaults({"version": "v252", "japanese": True})
@@ -300,6 +322,7 @@ class TestDefaults(LauncherTestBase):
         data = self.read_config()
         self.assertNotIn("defaults", data)
         self.assertEqual(data["versions"], self.exes)
+        self.assertFalse(api.get_defaults()["ok"])
 
     def test_deleted_version_falls_back(self):
         api = self._default_api()

@@ -484,8 +484,19 @@ class FluentAPI(WebAPI):
         return boot
 
     def get_defaults(self):
-        return {"ok": True, "defaults": self._current_defaults(),
-                "hasSavedDefaults": isinstance(self.data.get("defaults"), dict)}
+        """保存済みのデフォルト設定を返す（「保存したデフォルトを適用」用）。
+
+        保存したバージョンが削除されている場合は先頭のバージョンにフォールバックし、
+        missingVersion に元のバージョン名を入れて返す。
+        """
+        saved = self.data.get("defaults")
+        if not isinstance(saved, dict):
+            return {"ok": False, "hasSavedDefaults": False,
+                    "error": "保存されたデフォルト設定がありません。「現在の設定をデフォルトとして保存」で保存してください。"}
+        defaults = self._current_defaults()
+        saved_version = saved.get("version") if isinstance(saved.get("version"), str) else ""
+        missing = saved_version if saved_version and saved_version != defaults["version"] else ""
+        return {"ok": True, "defaults": defaults, "hasSavedDefaults": True, "missingVersion": missing}
 
     def save_defaults(self, settings: dict):
         """現在の起動設定をデフォルトとして fluent_versions.json に保存（versions は維持）。"""
@@ -498,7 +509,7 @@ class FluentAPI(WebAPI):
         return {"ok": True, "defaults": normalized}
 
     def reset_defaults(self):
-        """保存済みのデフォルトを削除し、初期設定を返す（versions は維持）。"""
+        """「初期設定にリセット」: 保存済みのデフォルトを削除し、アプリの初期値を返す（versions は維持）。"""
         self.data.pop("defaults", None)
         try:
             self._persist()
